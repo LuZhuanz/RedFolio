@@ -1,0 +1,91 @@
+{
+  "name": "redfolio",
+  "version": "0.1.0",
+  "description": "Desktop dividend portfolio tracker for A-share stocks and listed dividend ETFs.",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron --no-sandbox .\"",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test:py": "PYTHONPATH=service python3 -m unittest discover -s service/tests",
+    "check": "npm run typecheck && npm run test:py",
+    "package:service": "pyinstaller --noconfirm --clean --distpath service/dist --workpath service/build service/redfolio-service.spec",
+    "package:dir": "npm run build && npm run package:service && electron-builder --dir",
+    "package:linux": "npm run build && npm run package:service && electron-builder --linux AppImage deb tar.gz",
+    "release:check": "npm run check && npm run build && npm run package:service",
+    "package:win": "npm run build && npm run package:service && electron-builder --win nsis",
+    "package:mac": "npm run build && npm run package:service && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "electron": "^33.3.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.redfolio.desktop",
+    "productName": "RedFolio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "service/dist",
+        "to": "service",
+        "filter": [
+          "redfolio-service*"
+        ]
+      }
+    ],
+    "asar": true,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Office",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "maintainer": "RedFolio Maintainers <maintainers@redfolio.local>",
+      "icon": "build/icons",
+      "syncDesktopName": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.finance",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
+  },
+  "author": {
+    "name": "RedFolio Maintainers",
+    "email": "maintainers@redfolio.local"
+  },
+  "homepage": "https://redfolio.local",
+  "desktopName": "RedFolio"
+}

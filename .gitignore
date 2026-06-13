@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-electron/
+.vite/
+*.log
+*.sqlite
+*.sqlite3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+
+release/
+service/build/
+service/dist/
