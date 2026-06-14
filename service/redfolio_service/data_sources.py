@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import Any, TypeVar
+
+DEFAULT_AKSHARE_TIMEOUT_SECONDS = 15.0
+DEFAULT_AKSHARE_REQUEST_INTERVAL_SECONDS = 0.5
+T = TypeVar("T")
+
+_no_proxy_extended = False
+_no_proxy_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -35,20 +46,36 @@ class DataSourceError(RuntimeError):
     pass
 
 
+def env_float(name: str, default: float, minimum: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
 def extend_no_proxy_for_cn_sources() -> None:
-    hosts = [
-        ".eastmoney.com",
-        "eastmoney.com",
-        "82.push2.eastmoney.com",
-        "push2.eastmoney.com",
-        "datacenter-web.eastmoney.com",
-        ".cninfo.com.cn",
-        "cninfo.com.cn",
-    ]
-    for key in ("NO_PROXY", "no_proxy"):
-        current = [item.strip() for item in os.environ.get(key, "").split(",") if item.strip()]
-        merged = current + [host for host in hosts if host not in current]
-        os.environ[key] = ",".join(merged)
+    global _no_proxy_extended
+    with _no_proxy_lock:
+        if _no_proxy_extended:
+            return
+        hosts = [
+            ".eastmoney.com",
+            "eastmoney.com",
+            "82.push2.eastmoney.com",
+            "push2.eastmoney.com",
+            "datacenter-web.eastmoney.com",
+            ".cninfo.com.cn",
+            "cninfo.com.cn",
+        ]
+        for key in ("NO_PROXY", "no_proxy"):
+            current = [item.strip() for item in os.environ.get(key, "").split(",") if item.strip()]
+            merged = current + [host for host in hosts if host not in current]
+            os.environ[key] = ",".join(merged)
+        _no_proxy_extended = True
 
 
 def normalize_code(code: str) -> str:
@@ -161,6 +188,18 @@ class AkshareDataSource:
         except Exception as exc:  # pragma: no cover - depends on user env
             raise DataSourceError("akshare is not installed or failed to import") from exc
         self.ak = ak
+        self.timeout_seconds = env_float(
+            "REDFOLIO_AKSHARE_TIMEOUT_SECONDS",
+            DEFAULT_AKSHARE_TIMEOUT_SECONDS,
+            0.1,
+        )
+        self.request_interval_seconds = env_float(
+            "REDFOLIO_AKSHARE_REQUEST_INTERVAL_SECONDS",
+            DEFAULT_AKSHARE_REQUEST_INTERVAL_SECONDS,
+            0.0,
+        )
+        self._request_lock = threading.Lock()
+        self._last_request_at = 0.0
 
     def search(self, query: str) -> list[dict[str, Any]]:
         code = normalize_code(query)
@@ -200,7 +239,7 @@ class AkshareDataSource:
             ("akshare:stock_zh_a_spot_sina", self.ak.stock_zh_a_spot),
         ):
             try:
-                frame = loader()
+                frame = self._call_remote(source_name, loader)
                 row = self._find_row(frame, code, ("代码", "code"))
                 if not row:
                     errors.append(f"{source_name}: stock quote not found")
@@ -225,7 +264,7 @@ class AkshareDataSource:
         raise DataSourceError(f"stock quote failed for {code}: " + "; ".join(errors))
 
     def _get_etf_quote(self, code: str) -> Quote:
-        frame = self.ak.fund_etf_spot_em()
+        frame = self._call_remote("akshare:fund_etf_spot_em", self.ak.fund_etf_spot_em)
         row = self._find_row(frame, code, ("代码", "code"))
         if not row:
             raise DataSourceError(f"ETF quote not found for {code}")
@@ -270,7 +309,7 @@ class AkshareDataSource:
             if function is None:
                 continue
             try:
-                frame = function(**kwargs)
+                frame = self._call_remote(f"akshare:{function_name}:{source}", function, **kwargs)
                 dividends = self._parse_dividend_frame(frame, f"akshare:{function_name}:{source}", security_type)
                 if dividends:
                     return dividends
@@ -280,6 +319,38 @@ class AkshareDataSource:
         if errors and not successful_empty_call:
             raise DataSourceError("; ".join(errors))
         return []
+
+    def _wait_for_rate_limit(self) -> None:
+        if self.request_interval_seconds <= 0:
+            return
+        with self._request_lock:
+            elapsed = time.monotonic() - self._last_request_at
+            delay = self.request_interval_seconds - elapsed
+            if delay > 0:
+                time.sleep(delay)
+            self._last_request_at = time.monotonic()
+
+    def _call_remote(self, label: str, function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        self._wait_for_rate_limit()
+        result_queue: queue.Queue[tuple[str, T | BaseException]] = queue.Queue(maxsize=1)
+
+        def run() -> None:
+            try:
+                result_queue.put(("ok", function(*args, **kwargs)))
+            except BaseException as exc:  # pragma: no cover - remote library failures vary
+                result_queue.put(("error", exc))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(self.timeout_seconds)
+
+        if thread.is_alive():
+            raise DataSourceError(f"{label} timed out after {self.timeout_seconds:g}s")
+
+        status, value = result_queue.get_nowait()
+        if status == "error":
+            raise value
+        return value
 
     def _parse_dividend_frame(self, frame: Any, source: str, security_type: str) -> list[Dividend]:
         if frame is None or getattr(frame, "empty", False):
@@ -319,4 +390,3 @@ class AkshareDataSource:
     @staticmethod
     def _jsonable(row: dict[str, Any]) -> dict[str, Any]:
         return json.loads(json.dumps(row, ensure_ascii=False, default=str))
-

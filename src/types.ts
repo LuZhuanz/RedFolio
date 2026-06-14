@@ -119,4 +119,3 @@ declare global {
     };
   }
 }
-

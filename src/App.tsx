@@ -11,7 +11,16 @@ import {
   WalletCards
 } from "lucide-react";
 import { api } from "./api";
-import type { ChartSlice, DashboardData, DividendItem, PositionItem, SecurityType, TransactionInput, TransactionItem, TransactionSide } from "./types";
+import type {
+  ChartSlice,
+  DashboardData,
+  DividendItem,
+  PositionItem,
+  SecurityType,
+  TransactionInput,
+  TransactionItem,
+  TransactionSide
+} from "./types";
 
 const emptyDashboard: DashboardData = {
   totals: {
@@ -227,7 +236,11 @@ function DashboardView({ data }: { data: DashboardData }) {
         <Metric title="预计本年税前红利" value={currency(data.totals.forecastIncome)} />
         <Metric title="成本股息率" value={percent(data.totals.costYield)} />
         <Metric title="当前股息率" value={percent(data.totals.currentYield)} />
-        <Metric title="浮动盈亏" value={currency(data.totals.unrealizedPnl)} tone={data.totals.unrealizedPnl >= 0 ? "gain" : "loss"} />
+        <Metric
+          title="浮动盈亏"
+          value={currency(data.totals.unrealizedPnl)}
+          tone={data.totals.unrealizedPnl >= 0 ? "gain" : "loss"}
+        />
       </section>
 
       {data.positions.length === 0 ? (
@@ -243,7 +256,17 @@ function DashboardView({ data }: { data: DashboardData }) {
   );
 }
 
-function Metric({ title, value, icon, tone }: { title: string; value: string; icon?: React.ReactNode; tone?: "gain" | "loss" }) {
+function Metric({
+  title,
+  value,
+  icon,
+  tone
+}: {
+  title: string;
+  value: string;
+  icon?: React.ReactNode;
+  tone?: "gain" | "loss";
+}) {
   return (
     <article className={`metric ${tone ?? ""}`}>
       <div className="metric-title">
@@ -423,7 +446,13 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
       <div className="field-grid">
         <label>
           <span>证券代码</span>
-          <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="例如 600519" required pattern="[0-9.]{6,9}" />
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="例如 600519"
+            required
+            pattern="[0-9.]{6,9}"
+          />
         </label>
         <label>
           <span>名称</span>
@@ -449,11 +478,25 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
         </label>
         <label>
           <span>数量</span>
-          <input type="number" min="0" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            required
+          />
         </label>
         <label>
           <span>成交价</span>
-          <input type="number" min="0" step="0.001" value={price} onChange={(event) => setPrice(event.target.value)} required />
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            value={price}
+            onChange={(event) => setPrice(event.target.value)}
+            required
+          />
         </label>
         <label>
           <span>费用</span>
@@ -611,4 +654,3 @@ function ChartPanel({ title, items }: { title: string; items: ChartSlice[] }) {
     </article>
   );
 }
-

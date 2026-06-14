@@ -8,8 +8,9 @@ const { spawn } = require("node:child_process");
 
 let pythonProcess = null;
 let serviceConfig = null;
+let forceKillTimer = null;
 
-if (process.platform === "linux" && process.env.REDFOLIO_ENABLE_ELECTRON_SANDBOX !== "1") {
+if (process.platform === "linux" && process.env.REDFOLIO_DISABLE_ELECTRON_SANDBOX === "1") {
   app.commandLine.appendSwitch("no-sandbox");
 }
 
@@ -75,31 +76,18 @@ async function startPythonService() {
   const serviceDir = serviceRoot();
 
   const packagedService = packagedServiceExecutable();
-  const serviceArgs = [
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(port),
-    "--token",
-    token,
-    "--db",
-    dbPath
-  ];
+  const serviceArgs = ["--host", "127.0.0.1", "--port", String(port), "--token", token, "--db", dbPath];
   const command = packagedService || pythonExecutable();
   const args = packagedService ? serviceArgs : ["-m", "redfolio_service.main", ...serviceArgs];
 
-  pythonProcess = spawn(
-    command,
-    args,
-    {
-      cwd: serviceDir,
-      env: {
-        ...process.env,
-        PYTHONPATH: [serviceDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter)
-      },
-      stdio: ["ignore", "pipe", "pipe"]
-    }
-  );
+  pythonProcess = spawn(command, args, {
+    cwd: serviceDir,
+    env: {
+      ...process.env,
+      PYTHONPATH: [serviceDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter)
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
 
   pythonProcess.stdout.on("data", (chunk) => {
     console.log(`[redfolio-service] ${chunk.toString().trimEnd()}`);
@@ -108,6 +96,10 @@ async function startPythonService() {
     console.error(`[redfolio-service] ${chunk.toString().trimEnd()}`);
   });
   pythonProcess.on("exit", (code, signal) => {
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer);
+      forceKillTimer = null;
+    }
     if (code !== 0 && code !== null) {
       console.error(`RedFolio service exited with code ${code}`);
     }
@@ -158,9 +150,17 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
-  if (pythonProcess && !pythonProcess.killed) {
-    pythonProcess.kill();
+  if (!pythonProcess || pythonProcess.killed) {
+    return;
   }
+
+  pythonProcess.kill("SIGTERM");
+  forceKillTimer = setTimeout(() => {
+    if (pythonProcess && !pythonProcess.killed) {
+      pythonProcess.kill("SIGKILL");
+    }
+  }, 3000);
+  forceKillTimer.unref?.();
 });
 
 app.on("window-all-closed", () => {
@@ -168,4 +168,3 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
-

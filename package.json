@@ -5,18 +5,21 @@
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron --no-sandbox .\"",
+    "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron .\"",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test:py": "PYTHONPATH=service python3 -m unittest discover -s service/tests",
-    "check": "npm run typecheck && npm run test:py",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:py",
     "package:service": "pyinstaller --noconfirm --clean --distpath service/dist --workpath service/build service/redfolio-service.spec",
     "package:dir": "npm run build && npm run package:service && electron-builder --dir",
     "package:linux": "npm run build && npm run package:service && electron-builder --linux AppImage deb tar.gz",
     "release:check": "npm run check && npm run build && npm run package:service",
     "package:win": "npm run build && npm run package:service && electron-builder --win nsis",
-    "package:mac": "npm run build && npm run package:service && electron-builder --mac dmg"
+    "package:mac": "npm run build && npm run package:service && electron-builder --mac dmg",
+    "format": "prettier --write --ignore-unknown . && python3 -m ruff format service",
+    "format:check": "prettier --check --ignore-unknown . && python3 -m ruff format --check service",
+    "lint": "python3 -m ruff check service"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -27,12 +30,13 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.4.1",
-    "concurrently": "^9.1.2",
-    "electron": "^33.3.1",
+    "@vitejs/plugin-react": "6.0.2",
+    "concurrently": "10.0.3",
+    "electron": "42.4.0",
     "electron-builder": "^26.15.3",
+    "prettier": "3.8.4",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7",
+    "vite": "8.0.16",
     "wait-on": "^8.0.1"
   },
   "build": {

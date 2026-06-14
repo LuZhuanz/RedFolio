@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -64,38 +64,22 @@ def position_from_transactions(transactions: Iterable[Transaction]) -> dict[str,
 
 
 def shares_on_date(transactions: Iterable[Transaction], target_date: date) -> float:
-    relevant = [
-        transaction
-        for transaction in transactions
-        if transaction.trade_date <= target_date
-    ]
+    relevant = [transaction for transaction in transactions if transaction.trade_date <= target_date]
     return position_from_transactions(relevant)["quantity"]
 
 
 def ttm_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
     start = as_of - timedelta(days=365)
-    total = sum(
-        event.cash_per_share
-        for event in events
-        if start < event.ex_date <= as_of and event.cash_per_share > 0
-    )
+    total = sum(event.cash_per_share for event in events if start < event.ex_date <= as_of and event.cash_per_share > 0)
     return round(total, 6)
 
 
 def reference_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
-    eligible_events = [
-        event
-        for event in events
-        if event.ex_date <= as_of and event.cash_per_share > 0
-    ]
+    eligible_events = [event for event in events if event.ex_date <= as_of and event.cash_per_share > 0]
     report_years = [event.report_year for event in eligible_events if event.report_year is not None]
     if report_years:
         latest_report_year = max(report_years)
-        total = sum(
-            event.cash_per_share
-            for event in eligible_events
-            if event.report_year == latest_report_year
-        )
+        total = sum(event.cash_per_share for event in eligible_events if event.report_year == latest_report_year)
         return round(total, 6)
 
     return ttm_cash_per_share(eligible_events, as_of)
@@ -114,7 +98,11 @@ def forecast_taxable_income(
     known_income = 0.0
 
     for event in year_events:
-        shares = shares_on_date(sorted_transactions, event.ex_date) if event.ex_date <= as_of else position_from_transactions(sorted_transactions)["quantity"]
+        shares = (
+            shares_on_date(sorted_transactions, event.ex_date)
+            if event.ex_date <= as_of
+            else position_from_transactions(sorted_transactions)["quantity"]
+        )
         amount = max(0.0, shares) * max(0.0, event.cash_per_share)
         known_cash_per_share += max(0.0, event.cash_per_share)
         known_income += amount
@@ -173,4 +161,3 @@ def yield_metrics(ttm_cash: float, last_price: float | None, average_cost: float
         "current_yield": current_yield,
         "cost_yield": cost_yield,
     }
-

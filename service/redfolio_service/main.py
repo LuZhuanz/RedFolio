@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -18,11 +18,17 @@ from .calculations import (
     forecast_taxable_income,
     position_from_transactions,
     reference_cash_per_share,
-    ttm_cash_per_share,
     yield_metrics,
 )
-from .data_sources import AkshareDataSource, DataSourceError, infer_exchange, infer_security_type, normalize_code, parse_date_value
-from .db import connect, init_db, rows_to_dicts
+from .data_sources import (
+    AkshareDataSource,
+    DataSourceError,
+    infer_exchange,
+    infer_security_type,
+    normalize_code,
+    parse_date_value,
+)
+from .db import connect, ensure_db_parent, init_db, rows_to_dicts
 
 
 class TransactionIn(BaseModel):
@@ -39,6 +45,7 @@ class TransactionIn(BaseModel):
 
 class AppState:
     def __init__(self, db_path: str, token: str) -> None:
+        ensure_db_parent(db_path)
         self.db_path = db_path
         self.token = token
 
@@ -69,10 +76,6 @@ def create_app(db_path: str, token: str) -> FastAPI:
     def require_token(x_redfolio_token: Annotated[str | None, Header()] = None) -> None:
         if state.token and x_redfolio_token != state.token:
             raise HTTPException(status_code=401, detail="invalid redfolio token")
-
-    @app.middleware("http")
-    async def auth_health_passthrough(request: Request, call_next):
-        return await call_next(request)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -231,7 +234,9 @@ def create_app(db_path: str, token: str) -> FastAPI:
             "forecastIncome": round(sum(item["forecastIncome"] for item in positions), 2),
             "unrealizedPnl": round(sum(item["unrealizedPnl"] for item in positions), 2),
         }
-        totals["currentYield"] = round(totals["forecastIncome"] / totals["marketValue"], 6) if totals["marketValue"] else None
+        totals["currentYield"] = (
+            round(totals["forecastIncome"] / totals["marketValue"], 6) if totals["marketValue"] else None
+        )
         totals["costYield"] = round(totals["forecastIncome"] / totals["costBasis"], 6) if totals["costBasis"] else None
         return {
             "totals": totals,
@@ -288,8 +293,12 @@ def create_app(db_path: str, token: str) -> FastAPI:
         ok_items = [item for item in items if item["status"] == "ok"]
         partial_items = [item for item in items if item["status"] == "partial"]
         failed_items = [item for item in items if item["status"] == "failed"]
-        job_status = "ok" if not partial_items and not failed_items else "partial" if ok_items or partial_items else "failed"
-        mark_job(state, job_id, job_status, f"{len(ok_items)} ok, {len(partial_items)} partial, {len(failed_items)} failed")
+        job_status = (
+            "ok" if not partial_items and not failed_items else "partial" if ok_items or partial_items else "failed"
+        )
+        mark_job(
+            state, job_id, job_status, f"{len(ok_items)} ok, {len(partial_items)} partial, {len(failed_items)} failed"
+        )
         return {
             "items": items,
             "refreshed": len(ok_items),
@@ -428,7 +437,9 @@ def build_positions(state: AppState, as_of: date) -> list[dict[str, Any]]:
                 """
             ).fetchall()
         )
-        transaction_rows = rows_to_dicts(connection.execute("SELECT * FROM transactions ORDER BY trade_date, id").fetchall())
+        transaction_rows = rows_to_dicts(
+            connection.execute("SELECT * FROM transactions ORDER BY trade_date, id").fetchall()
+        )
         dividend_rows = rows_to_dicts(
             connection.execute(
                 """
@@ -550,7 +561,13 @@ def refresh_instrument(state: AppState, source: AkshareDataSource, instrument: d
                     INSERT OR REPLACE INTO market_snapshots (instrument_id, price, as_of, source, payload_json, updated_at)
                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     """,
-                    (instrument["id"], quote.price, quote.as_of.isoformat(), quote.source, json.dumps(quote.payload or {}, ensure_ascii=False)),
+                    (
+                        instrument["id"],
+                        quote.price,
+                        quote.as_of.isoformat(),
+                        quote.source,
+                        json.dumps(quote.payload or {}, ensure_ascii=False),
+                    ),
                 )
             if dividends_loaded:
                 for dividend in dividends:
@@ -609,7 +626,9 @@ def mark_job(state: AppState, job_id: int, status: str, message: str) -> None:
         connection.commit()
 
 
-def group_amounts(items: list[dict[str, Any]], key: str, amount_key: str, fallback_key: str | None = None) -> list[dict[str, Any]]:
+def group_amounts(
+    items: list[dict[str, Any]], key: str, amount_key: str, fallback_key: str | None = None
+) -> list[dict[str, Any]]:
     grouped: dict[str, float] = {}
     for item in items:
         label = str(item.get(key) or item.get(fallback_key or key) or "未分类")
@@ -681,4 +700,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

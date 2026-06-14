@@ -4,11 +4,15 @@ import sqlite3
 from pathlib import Path
 
 
-def connect(db_path: str) -> sqlite3.Connection:
+def ensure_db_parent(db_path: str) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def connect(db_path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
     return connection
 
 
@@ -86,4 +90,3 @@ def row_to_dict(row: sqlite3.Row | None) -> dict | None:
 
 def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
     return [dict(row) for row in rows]
-

@@ -1,4 +1,12 @@
-import type { DashboardData, DividendItem, PositionItem, RedfolioConfig, RefreshResult, TransactionInput, TransactionItem } from "./types";
+import type {
+  DashboardData,
+  DividendItem,
+  PositionItem,
+  RedfolioConfig,
+  RefreshResult,
+  TransactionInput,
+  TransactionItem
+} from "./types";
 
 let cachedConfig: RedfolioConfig | null = null;
 
@@ -67,4 +75,3 @@ export const api = {
     return requestJson("/api/refresh", { method: "POST" });
   }
 };
-

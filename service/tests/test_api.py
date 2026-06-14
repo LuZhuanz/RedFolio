@@ -86,7 +86,6 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(sell.status_code, 422)
 
-
     def test_refresh_instrument_keeps_dividends_when_quote_fails(self):
         self.client.post(
             "/api/transactions",
@@ -147,6 +146,17 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/api/dashboard")
 
         self.assertEqual(response.status_code, 401)
+
+    def test_database_uses_wal_mode(self):
+        import sqlite3
+
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200, response.text)
+
+        with sqlite3.connect(self.db_path) as connection:
+            mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+
+        self.assertEqual(mode.lower(), "wal")
 
     def dividend_row(self, row_id: int, ex_date: str, cash_per_share: float, announcement_date: str) -> dict:
         return {

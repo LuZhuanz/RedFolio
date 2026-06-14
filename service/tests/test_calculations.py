@@ -1,17 +1,17 @@
-from datetime import date
 import unittest
+from datetime import date
 
-from redfolio_service.data_sources import cash_per_share_from_row
 from redfolio_service.calculations import (
     DividendEvent,
     Transaction,
     forecast_taxable_income,
     position_from_transactions,
-    shares_on_date,
     reference_cash_per_share,
+    shares_on_date,
     ttm_cash_per_share,
     yield_metrics,
 )
+from redfolio_service.data_sources import cash_per_share_from_row
 
 
 class CalculationTests(unittest.TestCase):
@@ -46,7 +46,6 @@ class CalculationTests(unittest.TestCase):
 
         self.assertEqual(ttm_cash_per_share(events, date(2026, 6, 1)), 0.7)
 
-
     def test_reference_cash_uses_latest_report_year(self):
         events = [
             DividendEvent(1, 1, date(2025, 7, 14), 0.1646, report_year=2024),
@@ -69,8 +68,6 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(forecast["status"], "mixed")
         self.assertAlmostEqual(forecast["amount"], 60.0)
         self.assertEqual(len(forecast["lines"]), 2)
-
-
 
     def test_forecast_uses_report_year_reference(self):
         transactions = [Transaction(1, 1, "BUY", date(2026, 1, 1), 300, 7.26, 0)]
@@ -123,4 +120,3 @@ class CalculationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

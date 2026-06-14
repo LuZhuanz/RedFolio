@@ -17,13 +17,15 @@ RedFolio 是一个桌面红利持仓应用，用于记录 A 股股票和场内 E
 npm install
 ```
 
-安装 Python 依赖：
+安装锁定的 Python 依赖：
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r service/requirements.txt
+pip install -r service/requirements.lock
 ```
+
+更新依赖版本时先调整 `service/requirements.txt`，再在干净虚拟环境中重新生成 `service/requirements.lock`。
 
 启动桌面应用：
 
@@ -37,6 +39,25 @@ npm run dev
 npm run check
 ```
 
+格式化代码：
+
+```bash
+npm run format
+```
+
+只检查格式和 lint：
+
+```bash
+npm run format:check
+npm run lint
+```
+
+## 运行配置
+
+- `REDFOLIO_DISABLE_ELECTRON_SANDBOX=1`：仅用于在 Linux 上显式关闭 Electron 沙箱。
+- `REDFOLIO_AKSHARE_TIMEOUT_SECONDS`：AKShare 单次调用超时，默认 15 秒。
+- `REDFOLIO_AKSHARE_REQUEST_INTERVAL_SECONDS`：AKShare 调用间隔，默认 0.5 秒。
+
 ## 当前口径
 
 - 支持 A 股股票和沪深场内 ETF。
@@ -46,7 +67,6 @@ npm run check
 - 预计本年红利为税前口径：当年已公告/已发生优先，未公告部分用近 12 个月现金分红估算。
 - 数据保存在 Electron 用户数据目录下的 `redfolio.sqlite3`。
 
-
 ## 发布安装包
 
 当前发布链路会先用 PyInstaller 把本地 Python 数据服务打包成 `redfolio-service`，再用 Electron Builder 生成桌面安装包。
@@ -55,7 +75,7 @@ npm run check
 
 ```bash
 npm install
-pip install -r service/requirements.txt
+pip install -r service/requirements.lock
 ```
 
 构建当前 Linux 系统的安装包：
