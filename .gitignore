@@ -10,6 +10,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.cache/
+.pip-cache/
+.pyinstaller/
 .DS_Store
 
 release/
