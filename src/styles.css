@@ -249,8 +249,9 @@ button {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  align-items: start;
 }
 
 .panel {
@@ -269,9 +270,84 @@ button {
   font-size: 17px;
 }
 
+.holding-layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.78fr) minmax(0, 1.22fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.donut-side {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  min-width: 0;
+}
+
+.donut-chart {
+  display: grid;
+  place-items: center;
+  width: min(178px, 100%);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 36, 38, 0.08),
+    0 12px 26px rgba(34, 36, 38, 0.08);
+}
+
+.donut-hole {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  width: 58%;
+  aspect-ratio: 1;
+  border: 1px solid #e7e1d7;
+  border-radius: inherit;
+  background: #fffdfa;
+  text-align: center;
+}
+
+.donut-hole span,
+.concentration-grid span {
+  color: #706b63;
+  font-size: 12px;
+}
+
+.donut-hole strong {
+  margin-top: 3px;
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.concentration-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+.concentration-grid div {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.concentration-grid strong {
+  font-size: 15px;
+}
+
 .bar-list {
   display: grid;
   gap: 14px;
+}
+
+.holding-list {
+  align-self: stretch;
+  align-content: start;
+}
+
+.holding-list .bar-value {
+  font-size: 12px;
 }
 
 .bar-row {
@@ -344,6 +420,11 @@ button {
 .dot-5,
 .fill-5 {
   background: #4a5568;
+}
+
+.dot-other,
+.fill-other {
+  background: #9aa0a6;
 }
 
 .bar-value {
@@ -543,5 +624,9 @@ select:focus {
   .dashboard-grid,
   .split {
     grid-template-columns: 1fr;
+  }
+
+  .holding-layout {
+    grid-template-columns: 180px minmax(0, 1fr);
   }
 }

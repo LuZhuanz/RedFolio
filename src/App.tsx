@@ -38,6 +38,15 @@ const emptyDashboard: DashboardData = {
 };
 
 const today = new Date().toISOString().slice(0, 10);
+const chartColors = ["#b2272b", "#2474a6", "#2f855a", "#b7791f", "#6b46c1", "#4a5568"];
+const otherColor = "#9aa0a6";
+
+type HoldingSlice = {
+  label: string;
+  detail: string;
+  value: number;
+  other?: boolean;
+};
 
 function currency(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -74,6 +83,47 @@ function statusLabel(status: PositionItem["forecastStatus"]): string {
     mixed: "公告+估算"
   };
   return labels[status];
+}
+
+function buildHoldingDistribution(positions: PositionItem[], limit = 8): HoldingSlice[] {
+  const sorted = [...positions]
+    .filter((position) => position.marketValue > 0)
+    .sort((a, b) => b.marketValue - a.marketValue);
+  const visible: HoldingSlice[] = sorted.slice(0, limit).map((position) => ({
+    label: position.name || position.code,
+    detail: position.code,
+    value: position.marketValue
+  }));
+  const hidden = sorted.slice(limit);
+  const otherValue = hidden.reduce((sum, position) => sum + position.marketValue, 0);
+
+  if (otherValue > 0) {
+    visible.push({
+      label: "其他",
+      detail: `${hidden.length} 个标的`,
+      value: otherValue,
+      other: true
+    });
+  }
+
+  return visible;
+}
+
+function donutGradient(items: HoldingSlice[], total: number): string {
+  if (total <= 0) {
+    return "#ece8df";
+  }
+
+  let cursor = 0;
+  const segments = items.map((item, index) => {
+    const start = cursor;
+    const end = cursor + (Math.max(item.value, 0) / total) * 100;
+    cursor = end;
+    const color = item.other ? otherColor : chartColors[index % chartColors.length];
+    return `${color} ${start.toFixed(4)}% ${end.toFixed(4)}%`;
+  });
+
+  return `conic-gradient(${segments.join(", ")})`;
 }
 
 type TabKey = "dashboard" | "positions" | "transactions" | "dividends";
@@ -247,6 +297,7 @@ function DashboardView({ data }: { data: DashboardData }) {
         <div className="empty-state">先添加一笔买入流水，持仓和红利预测会在这里汇总。</div>
       ) : (
         <section className="dashboard-grid">
+          <HoldingDistributionPanel positions={data.positions} />
           <ChartPanel title="资产类型" items={data.byType} />
           <ChartPanel title="行业 / 类型市值" items={data.byIndustry} />
           <ChartPanel title="红利贡献" items={data.dividendContribution} />
@@ -274,6 +325,71 @@ function Metric({
         <span>{title}</span>
       </div>
       <strong>{value}</strong>
+    </article>
+  );
+}
+
+function HoldingDistributionPanel({ positions }: { positions: PositionItem[] }) {
+  const items = useMemo(() => buildHoldingDistribution(positions), [positions]);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  const top3Value = items
+    .filter((item) => !item.other)
+    .slice(0, 3)
+    .reduce((sum, item) => sum + item.value, 0);
+  const largestValue = items[0]?.value ?? 0;
+
+  return (
+    <article className="panel holding-panel">
+      <div className="panel-title">
+        <h3>持仓占比</h3>
+        <span>{currency(total)}</span>
+      </div>
+      {items.length === 0 ? (
+        <div className="empty-state compact">暂无数据。</div>
+      ) : (
+        <div className="holding-layout">
+          <div className="donut-side">
+            <div className="donut-chart" style={{ background: donutGradient(items, total) }}>
+              <div className="donut-hole">
+                <span>前 3 持仓</span>
+                <strong>{percent(total ? top3Value / total : null)}</strong>
+              </div>
+            </div>
+            <div className="concentration-grid">
+              <div>
+                <span>最大单仓</span>
+                <strong>{percent(total ? largestValue / total : null)}</strong>
+              </div>
+              <div>
+                <span>持仓数</span>
+                <strong>{number(positions.length, 0)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="bar-list holding-list">
+            {items.map((item, index) => {
+              const ratio = total ? item.value / total : 0;
+              const colorClass = item.other ? "other" : index % 6;
+              return (
+                <div className="bar-row" key={`${item.label}-${item.detail}`}>
+                  <div className="bar-meta">
+                    <span className={`dot dot-${colorClass}`} />
+                    <strong>{item.label}</strong>
+                    <em>{percent(ratio)}</em>
+                  </div>
+                  <div className="bar-track">
+                    <div className={`bar-fill fill-${colorClass}`} style={{ width: `${Math.max(4, ratio * 100)}%` }} />
+                  </div>
+                  <span className="bar-value">
+                    {item.detail} · {currency(item.value)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </article>
   );
 }
