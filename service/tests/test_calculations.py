@@ -104,6 +104,16 @@ class CalculationTests(unittest.TestCase):
 
         self.assertEqual(cash_per_share_from_row(row), 0.061)
 
+    def test_stock_cash_value_defaults_to_ten_share_unit(self):
+        row = {"现金红利": 2.5}
+
+        self.assertEqual(cash_per_share_from_row(row, security_type="STOCK"), 0.25)
+
+    def test_etf_cash_value_defaults_to_single_unit(self):
+        row = {"现金红利": 0.061}
+
+        self.assertEqual(cash_per_share_from_row(row, security_type="ETF"), 0.061)
+
     def test_yield_metrics(self):
         metrics = yield_metrics(0.5, 10, 8)
 

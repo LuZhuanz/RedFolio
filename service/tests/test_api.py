@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
+from datetime import date
 
 from fastapi.testclient import TestClient
 
+from redfolio_service.calculations import reference_cash_per_share
 from redfolio_service.data_sources import Dividend
-from redfolio_service.main import create_app, refresh_instrument
+from redfolio_service.main import create_app, dividend_from_row, refresh_instrument, report_year_from_raw
 
 
 class ApiTests(unittest.TestCase):
@@ -123,10 +126,42 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(dividends), 1)
         self.assertEqual(dividends[0]["cashPerShare"], 0.1)
 
+    def test_stock_report_year_inference_avoids_ttm_overcount(self):
+        rows = [
+            self.dividend_row(1, "2025-07-14", 0.1646, "2025-03-29"),
+            self.dividend_row(2, "2025-12-15", 0.1414, "2025-12-09"),
+            self.dividend_row(3, "2026-05-13", 0.1689, "2026-05-07"),
+        ]
+
+        events = [dividend_from_row(row) for row in rows]
+
+        self.assertEqual([event.report_year for event in events], [2024, 2025, 2025])
+        self.assertEqual(reference_cash_per_share(events, date(2026, 6, 13)), 0.3103)
+
+    def test_etf_report_year_does_not_infer_from_calendar_dates(self):
+        raw_json = json.dumps({"公告日期": "2026-05-07", "除权除息日": "2026-05-13"}, ensure_ascii=False)
+
+        self.assertIsNone(report_year_from_raw(raw_json, infer_from_dates=False))
+
     def test_requires_token(self):
         response = self.client.get("/api/dashboard")
 
         self.assertEqual(response.status_code, 401)
+
+    def dividend_row(self, row_id: int, ex_date: str, cash_per_share: float, announcement_date: str) -> dict:
+        return {
+            "id": row_id,
+            "instrument_id": 1,
+            "ex_date": ex_date,
+            "pay_date": None,
+            "cash_per_share": cash_per_share,
+            "status": "announced",
+            "security_type": "STOCK",
+            "raw_json": json.dumps(
+                {"公告日期": announcement_date, "除权除息日": ex_date},
+                ensure_ascii=False,
+            ),
+        }
 
 
 if __name__ == "__main__":

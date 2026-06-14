@@ -108,8 +108,9 @@ def parse_float_value(value: Any) -> float | None:
     return float(match.group(0)) if match else None
 
 
-def cash_per_share_from_row(row: dict[str, Any]) -> float | None:
+def cash_per_share_from_row(row: dict[str, Any], security_type: str | None = None) -> float | None:
     joined = " ".join(str(value) for value in row.values())
+    normalized_security_type = (security_type or "").upper()
     ten_unit_pattern = r"(?:每\s*10\s*(?:股|份)?|10\s*(?:股|份)?)(?:\s|股|份|派|转|送|分红|现金){0,8}(?:派|分红|现金)\s*(\d+(?:\.\d+)?)"
     match = re.search(ten_unit_pattern, joined)
     if match:
@@ -132,7 +133,10 @@ def cash_per_share_from_row(row: dict[str, Any]) -> float | None:
         number = parse_float_value(value)
         if number is None:
             continue
+        has_explicit_single_unit = "每股" in name or "每份" in name
         if "10" in name or "每10" in name or any(token in name for token in ratio_tokens):
+            return number / 10
+        if normalized_security_type == "STOCK" and not has_explicit_single_unit:
             return number / 10
         return number
 
@@ -245,15 +249,20 @@ class AkshareDataSource:
             ("stock_dividend_detail", {"symbol": code, "indicator": "分红"}),
             ("stock_history_dividend_detail", {"symbol": code, "indicator": "分红"}),
         ]
-        return self._call_dividend_candidates(calls, "stock-dividend")
+        return self._call_dividend_candidates(calls, "stock-dividend", "STOCK")
 
     def _get_fund_dividends(self, code: str) -> list[Dividend]:
         calls = [
             ("fund_open_fund_info_em", {"symbol": code, "indicator": "分红送配详情"}),
         ]
-        return self._call_dividend_candidates(calls, "fund-dividend")
+        return self._call_dividend_candidates(calls, "fund-dividend", "ETF")
 
-    def _call_dividend_candidates(self, calls: list[tuple[str, dict[str, Any]]], source: str) -> list[Dividend]:
+    def _call_dividend_candidates(
+        self,
+        calls: list[tuple[str, dict[str, Any]]],
+        source: str,
+        security_type: str,
+    ) -> list[Dividend]:
         errors: list[str] = []
         successful_empty_call = False
         for function_name, kwargs in calls:
@@ -262,7 +271,7 @@ class AkshareDataSource:
                 continue
             try:
                 frame = function(**kwargs)
-                dividends = self._parse_dividend_frame(frame, f"akshare:{function_name}:{source}")
+                dividends = self._parse_dividend_frame(frame, f"akshare:{function_name}:{source}", security_type)
                 if dividends:
                     return dividends
                 successful_empty_call = True
@@ -272,14 +281,14 @@ class AkshareDataSource:
             raise DataSourceError("; ".join(errors))
         return []
 
-    def _parse_dividend_frame(self, frame: Any, source: str) -> list[Dividend]:
+    def _parse_dividend_frame(self, frame: Any, source: str, security_type: str) -> list[Dividend]:
         if frame is None or getattr(frame, "empty", False):
             return []
         rows = frame.to_dict(orient="records") if hasattr(frame, "to_dict") else []
         dividends: list[Dividend] = []
 
         for row in rows:
-            cash = cash_per_share_from_row(row)
+            cash = cash_per_share_from_row(row, security_type)
             ex_date = first_date(row, ("除权除息日", "除息日", "除权日", "权益除息日", "日期"))
             if cash is None or not ex_date or cash <= 0:
                 continue

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
@@ -20,7 +21,7 @@ from .calculations import (
     ttm_cash_per_share,
     yield_metrics,
 )
-from .data_sources import AkshareDataSource, DataSourceError, infer_exchange, infer_security_type, normalize_code
+from .data_sources import AkshareDataSource, DataSourceError, infer_exchange, infer_security_type, normalize_code, parse_date_value
 from .db import connect, init_db, rows_to_dicts
 
 
@@ -41,10 +42,18 @@ class AppState:
         self.db_path = db_path
         self.token = token
 
+    @contextmanager
     def connection(self):
         connection = connect(self.db_path)
         init_db(connection)
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
 
 def create_app(db_path: str, token: str) -> FastAPI:
@@ -356,6 +365,7 @@ def transaction_from_row(row: dict[str, Any]) -> Transaction:
 
 
 def dividend_from_row(row: dict[str, Any]) -> DividendEvent:
+    security_type = str(row.get("security_type") or row.get("securityType") or "").upper()
     return DividendEvent(
         id=int(row["id"]),
         instrument_id=int(row["instrument_id"]),
@@ -363,18 +373,47 @@ def dividend_from_row(row: dict[str, Any]) -> DividendEvent:
         pay_date=date.fromisoformat(row["pay_date"]) if row.get("pay_date") else None,
         cash_per_share=float(row["cash_per_share"]),
         status=row.get("status") or "announced",
-        report_year=report_year_from_raw(row.get("raw_json") or "{}"),
+        report_year=report_year_from_raw(row.get("raw_json") or "{}", infer_from_dates=security_type != "ETF"),
     )
 
 
-def report_year_from_raw(raw_json: str) -> int | None:
+def report_year_from_raw(raw_json: str, infer_from_dates: bool = True) -> int | None:
     try:
         raw = json.loads(raw_json)
     except json.JSONDecodeError:
         return None
-    report_text = str(raw.get("报告时间") or raw.get("报告期") or "")
+    report_text = str(raw.get("报告时间") or raw.get("报告期") or raw.get("分红年度") or raw.get("年度") or "")
     match = re.search(r"(\d{4})", report_text)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1))
+
+    if not infer_from_dates:
+        return None
+
+    announcement_date = first_raw_date(raw, ("公告日期", "预案公告日", "董事会日期"))
+    ex_date = first_raw_date(raw, ("除权除息日", "除息日", "除权日", "权益除息日", "日期"))
+
+    if ex_date and ex_date.month >= 9:
+        return ex_date.year
+    if announcement_date:
+        if ex_date and ex_date.month <= 2 and announcement_date.year < ex_date.year:
+            return announcement_date.year
+        if announcement_date.month <= 8:
+            return announcement_date.year - 1
+        return announcement_date.year
+    if ex_date:
+        return ex_date.year - 1 if ex_date.month <= 8 else ex_date.year
+    return None
+
+
+def first_raw_date(raw: dict[str, Any], candidates: tuple[str, ...]) -> date | None:
+    for wanted in candidates:
+        for key, value in raw.items():
+            if wanted in str(key):
+                parsed = parse_date_value(value)
+                if parsed:
+                    return parsed
+    return None
 
 
 def build_positions(state: AppState, as_of: date) -> list[dict[str, Any]]:
@@ -390,7 +429,16 @@ def build_positions(state: AppState, as_of: date) -> list[dict[str, Any]]:
             ).fetchall()
         )
         transaction_rows = rows_to_dicts(connection.execute("SELECT * FROM transactions ORDER BY trade_date, id").fetchall())
-        dividend_rows = rows_to_dicts(connection.execute("SELECT * FROM dividend_events ORDER BY ex_date, id").fetchall())
+        dividend_rows = rows_to_dicts(
+            connection.execute(
+                """
+                SELECT d.*, i.security_type
+                FROM dividend_events d
+                JOIN instruments i ON i.id = d.instrument_id
+                ORDER BY d.ex_date, d.id
+                """
+            ).fetchall()
+        )
         snapshot_rows = rows_to_dicts(
             connection.execute(
                 """
