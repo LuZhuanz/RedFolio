@@ -12,10 +12,11 @@
     "test:py": "PYTHONPATH=service python3 -m unittest discover -s service/tests",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:py",
     "package:service": "pyinstaller --noconfirm --clean --distpath service/dist --workpath service/build service/redfolio-service.spec",
+    "package:service:win": ".venv312\\Scripts\\python.exe -m PyInstaller --noconfirm --clean --distpath service/dist --workpath service/build service/redfolio-service.spec",
     "package:dir": "npm run build && npm run package:service && electron-builder --dir",
     "package:linux": "npm run build && npm run package:service && electron-builder --linux AppImage deb tar.gz",
     "release:check": "npm run check && npm run build && npm run package:service",
-    "package:win": "npm run build && npm run package:service && electron-builder --win nsis",
+    "package:win": "npm run build && npm run package:service:win && electron-builder --win nsis",
     "package:mac": "npm run build && npm run package:service && electron-builder --mac dmg",
     "format": "prettier --write --ignore-unknown . && python3 -m ruff format service",
     "format:check": "prettier --check --ignore-unknown . && python3 -m ruff format --check service",
@@ -57,6 +58,10 @@
         "filter": [
           "redfolio-service*"
         ]
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "asar": true,
@@ -76,7 +81,12 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "mac": {
       "target": [

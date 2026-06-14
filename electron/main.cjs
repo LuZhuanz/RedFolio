@@ -33,6 +33,16 @@ function serviceRoot() {
   return path.join(__dirname, "..", "service");
 }
 
+function appIconPath() {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "icon.ico");
+  }
+  return path.join(__dirname, "..", "build", "icon.ico");
+}
+
 function packagedServiceExecutable() {
   if (!app.isPackaged) {
     return null;
@@ -119,6 +129,7 @@ async function createWindow() {
     minWidth: 1040,
     minHeight: 680,
     title: "RedFolio",
+    icon: appIconPath(),
     backgroundColor: "#f5f4ef",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
