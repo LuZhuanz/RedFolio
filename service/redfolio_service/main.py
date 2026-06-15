@@ -30,6 +30,8 @@ from .data_sources import (
 )
 from .db import connect, ensure_db_parent, init_db, rows_to_dicts
 
+SUPPORTED_SECURITY_TYPES = {"STOCK", "ETF", "ETF_LINK"}
+
 
 class TransactionIn(BaseModel):
     code: str = Field(min_length=1, max_length=16)
@@ -316,13 +318,31 @@ def normalize_side(side: str) -> str:
     return upper
 
 
+def default_exchange_for_type(code: str, security_type: str) -> str:
+    return "OTC" if security_type == "ETF_LINK" else infer_exchange(code)
+
+
+def default_industry_for_type(security_type: str) -> str:
+    if security_type == "ETF_LINK":
+        return "ETF联接基金"
+    if security_type == "ETF":
+        return "ETF"
+    return ""
+
+
+def display_industry(security_type: str, industry: str | None) -> str:
+    return industry or default_industry_for_type(security_type) or "未分类"
+
+
 def upsert_instrument(connection, code: str, security_type: str | None, name: str = "") -> int:
     clean = normalize_code(code)
     if len(clean) != 6:
         raise HTTPException(status_code=422, detail="security code must contain 6 digits")
     target_type = (security_type or infer_security_type(clean)).upper()
-    if target_type not in {"STOCK", "ETF"}:
-        raise HTTPException(status_code=422, detail="securityType must be STOCK or ETF")
+    if target_type not in SUPPORTED_SECURITY_TYPES:
+        raise HTTPException(status_code=422, detail="securityType must be STOCK, ETF, or ETF_LINK")
+    exchange = default_exchange_for_type(clean, target_type)
+    default_industry = default_industry_for_type(target_type)
 
     existing = connection.execute("SELECT * FROM instruments WHERE code = ?", (clean,)).fetchone()
     if existing:
@@ -331,11 +351,26 @@ def upsert_instrument(connection, code: str, security_type: str | None, name: st
             UPDATE instruments
             SET name = COALESCE(NULLIF(?, ''), name),
                 security_type = ?,
-                exchange = COALESCE(NULLIF(exchange, ''), ?),
+                exchange = ?,
+                industry = CASE
+                    WHEN ? = '' AND security_type != ? THEN ''
+                    WHEN ? != '' AND (industry = '' OR security_type != ?) THEN ?
+                    ELSE industry
+                END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE code = ?
             """,
-            (name.strip(), target_type, infer_exchange(clean), clean),
+            (
+                name.strip(),
+                target_type,
+                exchange,
+                default_industry,
+                target_type,
+                default_industry,
+                target_type,
+                default_industry,
+                clean,
+            ),
         )
         return int(existing["id"])
 
@@ -344,7 +379,7 @@ def upsert_instrument(connection, code: str, security_type: str | None, name: st
         INSERT INTO instruments (code, name, security_type, exchange, industry)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (clean, name.strip(), target_type, infer_exchange(clean), "ETF" if target_type == "ETF" else ""),
+        (clean, name.strip(), target_type, exchange, default_industry),
     )
     return int(cursor.lastrowid)
 
@@ -382,7 +417,7 @@ def dividend_from_row(row: dict[str, Any]) -> DividendEvent:
         pay_date=date.fromisoformat(row["pay_date"]) if row.get("pay_date") else None,
         cash_per_share=float(row["cash_per_share"]),
         status=row.get("status") or "announced",
-        report_year=report_year_from_raw(row.get("raw_json") or "{}", infer_from_dates=security_type != "ETF"),
+        report_year=report_year_from_raw(row.get("raw_json") or "{}", infer_from_dates=security_type == "STOCK"),
     )
 
 
@@ -502,7 +537,7 @@ def build_positions(state: AppState, as_of: date) -> list[dict[str, Any]]:
                 "name": display_name,
                 "securityType": instrument["security_type"],
                 "exchange": instrument["exchange"],
-                "industry": instrument["industry"] or ("ETF" if instrument["security_type"] == "ETF" else "未分类"),
+                "industry": display_industry(instrument["security_type"], instrument["industry"]),
                 "quantity": position["quantity"],
                 "averageCost": position["average_cost"],
                 "costBasis": position["cost_basis"],

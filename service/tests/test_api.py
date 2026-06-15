@@ -50,6 +50,36 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["totals"]["costBasis"], 150005.0)
         self.assertEqual(body["positions"][0]["code"], "600519")
 
+    def test_create_etf_link_transaction_and_dashboard(self):
+        response = self.client.post(
+            "/api/transactions",
+            headers=self.headers,
+            json={
+                "code": "014164",
+                "securityType": "ETF_LINK",
+                "name": "红利低波ETF联接A",
+                "side": "BUY",
+                "tradeDate": "2026-01-02",
+                "quantity": 123.45,
+                "price": 1.2345,
+                "fees": 1.2,
+                "note": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        dashboard = self.client.get("/api/dashboard", headers=self.headers)
+
+        self.assertEqual(dashboard.status_code, 200, dashboard.text)
+        body = dashboard.json()
+        position = body["positions"][0]
+        self.assertEqual(position["code"], "014164")
+        self.assertEqual(position["securityType"], "ETF_LINK")
+        self.assertEqual(position["exchange"], "OTC")
+        self.assertEqual(position["industry"], "ETF联接基金")
+        self.assertEqual(position["quantity"], 123.45)
+        self.assertEqual(body["byType"][0]["label"], "ETF_LINK")
+
     def test_rejects_oversell(self):
         buy = self.client.post(
             "/api/transactions",
@@ -141,6 +171,54 @@ class ApiTests(unittest.TestCase):
         raw_json = json.dumps({"公告日期": "2026-05-07", "除权除息日": "2026-05-13"}, ensure_ascii=False)
 
         self.assertIsNone(report_year_from_raw(raw_json, infer_from_dates=False))
+
+    def test_etf_link_report_year_does_not_infer_from_calendar_dates(self):
+        row = self.dividend_row(1, "2026-05-13", 0.061, "2026-05-07")
+        row["security_type"] = "ETF_LINK"
+
+        self.assertIsNone(dividend_from_row(row).report_year)
+
+    def test_init_db_migrates_old_instruments_check_for_etf_link(self):
+        import sqlite3
+
+        from redfolio_service.db import init_db
+
+        db_path = os.path.join(tempfile.gettempdir(), "redfolio-migrate-test.sqlite3")
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE instruments (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  code TEXT NOT NULL UNIQUE,
+                  name TEXT NOT NULL DEFAULT '',
+                  security_type TEXT NOT NULL CHECK (security_type IN ('STOCK', 'ETF')),
+                  exchange TEXT NOT NULL DEFAULT '',
+                  industry TEXT NOT NULL DEFAULT '',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO instruments (code, name, security_type, exchange, industry)
+                VALUES ('510880', '红利ETF', 'ETF', 'SH', 'ETF');
+                """
+            )
+
+            init_db(connection)
+            connection.execute(
+                """
+                INSERT INTO instruments (code, name, security_type, exchange, industry)
+                VALUES ('014164', '红利低波ETF联接A', 'ETF_LINK', 'OTC', 'ETF联接基金')
+                """
+            )
+            rows = connection.execute("SELECT code, security_type FROM instruments ORDER BY code").fetchall()
+
+            self.assertEqual(rows, [("014164", "ETF_LINK"), ("510880", "ETF")])
+        finally:
+            connection.close()
+            if os.path.exists(db_path):
+                os.remove(db_path)
 
     def test_requires_token(self):
         response = self.client.get("/api/dashboard")

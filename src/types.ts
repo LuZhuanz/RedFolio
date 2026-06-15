@@ -1,4 +1,4 @@
-export type SecurityType = "STOCK" | "ETF";
+export type SecurityType = "STOCK" | "ETF" | "ETF_LINK";
 export type TransactionSide = "BUY" | "SELL";
 
 export interface RedfolioConfig {

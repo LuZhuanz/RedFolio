@@ -75,6 +75,20 @@ function percent(value: number | null | undefined): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+function securityTypeLabel(type: string): string {
+  if (type === "ETF_LINK") {
+    return "ETF联接基金";
+  }
+  if (type === "ETF") {
+    return "场内 ETF";
+  }
+  return "股票";
+}
+
+function quantityDigits(type: string | undefined): number {
+  return type === "ETF_LINK" ? 2 : 0;
+}
+
 function statusLabel(status: PositionItem["forecastStatus"]): string {
   const labels = {
     none: "无分红记录",
@@ -244,7 +258,7 @@ export function App() {
       <section className="content">
         <header className="topbar">
           <div>
-            <p className="eyebrow">A 股股票 / 场内 ETF</p>
+            <p className="eyebrow">A 股股票 / 场内 ETF / ETF联接基金</p>
             <h2>{tabs.find((item) => item.key === tab)?.label}</h2>
           </div>
           <div className="topbar-status">
@@ -278,6 +292,11 @@ export function App() {
 }
 
 function DashboardView({ data }: { data: DashboardData }) {
+  const typeItems = data.byType.map((item) => ({
+    ...item,
+    label: securityTypeLabel(item.label)
+  }));
+
   return (
     <div className="stack">
       <section className="metrics-grid">
@@ -298,7 +317,7 @@ function DashboardView({ data }: { data: DashboardData }) {
       ) : (
         <section className="dashboard-grid">
           <HoldingDistributionPanel positions={data.positions} />
-          <ChartPanel title="资产类型" items={data.byType} />
+          <ChartPanel title="资产类型" items={typeItems} />
           <ChartPanel title="行业 / 类型市值" items={data.byIndustry} />
           <ChartPanel title="红利贡献" items={data.dividendContribution} />
         </section>
@@ -406,9 +425,9 @@ function PositionsView({ positions }: { positions: PositionItem[] }) {
           <tr>
             <th>标的</th>
             <th>类型</th>
-            <th className="numeric">数量</th>
-            <th className="numeric">成本价</th>
-            <th className="numeric">最新价</th>
+            <th className="numeric">数量/份额</th>
+            <th className="numeric">成本价/净值</th>
+            <th className="numeric">最新价/净值</th>
             <th className="numeric">市值</th>
             <th className="numeric">参考分红/份</th>
             <th className="numeric">当前股息率</th>
@@ -426,10 +445,10 @@ function PositionsView({ positions }: { positions: PositionItem[] }) {
                   <span>{position.code}</span>
                 </div>
               </td>
-              <td>{position.securityType === "ETF" ? "ETF" : "股票"}</td>
-              <td className="numeric">{number(position.quantity, 0)}</td>
-              <td className="numeric">{number(position.averageCost, 3)}</td>
-              <td className="numeric">{number(position.lastPrice, 3)}</td>
+              <td>{securityTypeLabel(position.securityType)}</td>
+              <td className="numeric">{number(position.quantity, quantityDigits(position.securityType))}</td>
+              <td className="numeric">{number(position.averageCost, position.securityType === "ETF_LINK" ? 4 : 3)}</td>
+              <td className="numeric">{number(position.lastPrice, position.securityType === "ETF_LINK" ? 4 : 3)}</td>
               <td className="numeric">{currency(position.marketValue)}</td>
               <td className="numeric">{number(position.ttmCashPerShare, 4)}</td>
               <td className="numeric">{percent(position.currentYield)}</td>
@@ -473,8 +492,8 @@ function TransactionsView({
                   <th>日期</th>
                   <th>标的</th>
                   <th>方向</th>
-                  <th className="numeric">数量</th>
-                  <th className="numeric">价格</th>
+                  <th className="numeric">数量/份额</th>
+                  <th className="numeric">价格/净值</th>
                   <th className="numeric">费用</th>
                   <th></th>
                 </tr>
@@ -494,8 +513,8 @@ function TransactionsView({
                         {item.side === "BUY" ? "买入" : "卖出"}
                       </span>
                     </td>
-                    <td className="numeric">{number(item.quantity, 0)}</td>
-                    <td className="numeric">{number(item.price, 3)}</td>
+                    <td className="numeric">{number(item.quantity, quantityDigits(item.securityType))}</td>
+                    <td className="numeric">{number(item.price, item.securityType === "ETF_LINK" ? 4 : 3)}</td>
                     <td className="numeric">{number(item.fees, 2)}</td>
                     <td className="numeric">
                       <button className="icon-button" onClick={() => onDelete(item.id)} type="button" title="删除">
@@ -524,6 +543,9 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
   const [fees, setFees] = useState("0");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const isEtfLink = securityType === "ETF_LINK";
+  const quantityLabel = isEtfLink ? "确认份额" : "数量";
+  const priceLabel = isEtfLink ? "确认净值" : "成交价";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -561,11 +583,11 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
 
       <div className="field-grid">
         <label>
-          <span>证券代码</span>
+          <span>证券/基金代码</span>
           <input
             value={code}
             onChange={(event) => setCode(event.target.value)}
-            placeholder="例如 600519"
+            placeholder="例如 600519 / 014164"
             required
             pattern="[0-9.]{6,9}"
           />
@@ -579,6 +601,7 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
           <select value={securityType} onChange={(event) => setSecurityType(event.target.value as SecurityType)}>
             <option value="STOCK">股票</option>
             <option value="ETF">场内 ETF</option>
+            <option value="ETF_LINK">ETF联接基金</option>
           </select>
         </label>
         <label>
@@ -593,22 +616,22 @@ function TransactionForm({ onCreate }: { onCreate: (payload: TransactionInput) =
           <input type="date" value={tradeDate} onChange={(event) => setTradeDate(event.target.value)} required />
         </label>
         <label>
-          <span>数量</span>
+          <span>{quantityLabel}</span>
           <input
             type="number"
             min="0"
-            step="1"
+            step={isEtfLink ? "0.01" : "1"}
             value={quantity}
             onChange={(event) => setQuantity(event.target.value)}
             required
           />
         </label>
         <label>
-          <span>成交价</span>
+          <span>{priceLabel}</span>
           <input
             type="number"
             min="0"
-            step="0.001"
+            step={isEtfLink ? "0.0001" : "0.001"}
             value={price}
             onChange={(event) => setPrice(event.target.value)}
             required
@@ -641,6 +664,7 @@ function DividendsView({ dividends, positions }: { dividends: DividendItem[]; po
           id: `${position.instrumentId}-${index}`,
           code: position.code,
           name: position.name,
+          securityType: position.securityType,
           ...line
         }))
       ),
@@ -683,7 +707,7 @@ function DividendsView({ dividends, positions }: { dividends: DividendItem[]; po
                     </td>
                     <td>{line.exDate ?? "--"}</td>
                     <td className="numeric">{number(line.cashPerShare, 4)}</td>
-                    <td className="numeric">{number(line.quantity, 0)}</td>
+                    <td className="numeric">{number(line.quantity, quantityDigits(line.securityType))}</td>
                     <td className="numeric">{currency(line.amount)}</td>
                   </tr>
                 ))}

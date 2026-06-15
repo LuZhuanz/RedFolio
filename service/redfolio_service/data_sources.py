@@ -220,16 +220,18 @@ class AkshareDataSource:
 
     def get_quote(self, code: str, security_type: str | None = None) -> Quote:
         clean = normalize_code(code)
-        target_type = security_type or infer_security_type(clean)
+        target_type = (security_type or infer_security_type(clean)).upper()
         if target_type == "ETF":
             return self._get_etf_quote(clean)
+        if target_type == "ETF_LINK":
+            return self._get_etf_link_quote(clean)
         return self._get_stock_quote(clean)
 
     def get_dividends(self, code: str, security_type: str | None = None) -> list[Dividend]:
         clean = normalize_code(code)
-        target_type = security_type or infer_security_type(clean)
-        if target_type == "ETF":
-            return self._get_fund_dividends(clean)
+        target_type = (security_type or infer_security_type(clean)).upper()
+        if target_type in {"ETF", "ETF_LINK"}:
+            return self._get_fund_dividends(clean, target_type)
         return self._get_stock_dividends(clean)
 
     def _get_stock_quote(self, code: str) -> Quote:
@@ -282,6 +284,68 @@ class AkshareDataSource:
             payload=self._jsonable(row),
         )
 
+    def _get_etf_link_quote(self, code: str) -> Quote:
+        errors: list[str] = []
+        try:
+            frame = self._call_remote("akshare:fund_open_fund_daily_em", self.ak.fund_open_fund_daily_em)
+            row = self._find_row(frame, code, ("基金代码", "代码", "code"))
+            if not row:
+                raise DataSourceError("open fund quote not found")
+            nav = self._latest_open_fund_nav(row)
+            if nav is None:
+                raise DataSourceError("open fund quote has no unit nav")
+            as_of, price, _source_key = nav
+            return Quote(
+                code=code,
+                name=str(row.get("基金简称") or row.get("名称") or ""),
+                security_type="ETF_LINK",
+                price=price,
+                as_of=as_of,
+                exchange="OTC",
+                industry="ETF联接基金",
+                source="akshare:fund_open_fund_daily_em",
+                payload=self._jsonable(row),
+            )
+        except Exception as exc:
+            errors.append(f"fund_open_fund_daily_em: {exc}")
+
+        try:
+            return self._get_etf_link_quote_from_history(code)
+        except Exception as exc:
+            errors.append(f"fund_open_fund_info_em: {exc}")
+
+        raise DataSourceError(f"ETF link fund quote failed for {code}: " + "; ".join(errors))
+
+    def _get_etf_link_quote_from_history(self, code: str) -> Quote:
+        frame = self._call_remote(
+            "akshare:fund_open_fund_info_em:open-fund-net-worth",
+            self.ak.fund_open_fund_info_em,
+            symbol=code,
+            indicator="单位净值走势",
+            period="1月",
+        )
+        candidates: list[tuple[date, float, dict[str, Any]]] = []
+        for row in self._frame_records(frame):
+            as_of = parse_date_value(row.get("净值日期"))
+            price = parse_float_value(row.get("单位净值"))
+            if as_of and price is not None:
+                candidates.append((as_of, price, row))
+        if not candidates:
+            raise DataSourceError("open fund net worth history has no unit nav")
+
+        as_of, price, row = max(candidates, key=lambda item: item[0])
+        return Quote(
+            code=code,
+            name="",
+            security_type="ETF_LINK",
+            price=price,
+            as_of=as_of,
+            exchange="OTC",
+            industry="ETF联接基金",
+            source="akshare:fund_open_fund_info_em:open-fund-net-worth",
+            payload=self._jsonable(row),
+        )
+
     def _get_stock_dividends(self, code: str) -> list[Dividend]:
         calls = [
             ("stock_dividend_cninfo", {"symbol": code}),
@@ -290,11 +354,11 @@ class AkshareDataSource:
         ]
         return self._call_dividend_candidates(calls, "stock-dividend", "STOCK")
 
-    def _get_fund_dividends(self, code: str) -> list[Dividend]:
+    def _get_fund_dividends(self, code: str, security_type: str) -> list[Dividend]:
         calls = [
             ("fund_open_fund_info_em", {"symbol": code, "indicator": "分红送配详情"}),
         ]
-        return self._call_dividend_candidates(calls, "fund-dividend", "ETF")
+        return self._call_dividend_candidates(calls, "fund-dividend", security_type)
 
     def _call_dividend_candidates(
         self,
@@ -353,12 +417,9 @@ class AkshareDataSource:
         return value
 
     def _parse_dividend_frame(self, frame: Any, source: str, security_type: str) -> list[Dividend]:
-        if frame is None or getattr(frame, "empty", False):
-            return []
-        rows = frame.to_dict(orient="records") if hasattr(frame, "to_dict") else []
         dividends: list[Dividend] = []
 
-        for row in rows:
+        for row in self._frame_records(frame):
             cash = cash_per_share_from_row(row, security_type)
             ex_date = first_date(row, ("除权除息日", "除息日", "除权日", "权益除息日", "日期"))
             if cash is None or not ex_date or cash <= 0:
@@ -378,14 +439,30 @@ class AkshareDataSource:
 
     @staticmethod
     def _find_row(frame: Any, code: str, keys: tuple[str, ...]) -> dict[str, Any] | None:
-        if frame is None or getattr(frame, "empty", False):
-            return None
-        rows = frame.to_dict(orient="records") if hasattr(frame, "to_dict") else []
-        for row in rows:
+        for row in AkshareDataSource._frame_records(frame):
             for key in keys:
                 if normalize_code(str(row.get(key, ""))) == code:
                     return row
         return None
+
+    @staticmethod
+    def _latest_open_fund_nav(row: dict[str, Any]) -> tuple[date, float, str] | None:
+        candidates: list[tuple[date, float, str]] = []
+        for key, value in row.items():
+            key_text = str(key)
+            if "单位净值" not in key_text or "累计" in key_text:
+                continue
+            price = parse_float_value(value)
+            if price is None:
+                continue
+            candidates.append((parse_date_value(key_text) or date.today(), price, key_text))
+        return max(candidates, key=lambda item: item[0]) if candidates else None
+
+    @staticmethod
+    def _frame_records(frame: Any) -> list[dict[str, Any]]:
+        if frame is None or getattr(frame, "empty", False):
+            return []
+        return frame.to_dict(orient="records") if hasattr(frame, "to_dict") else []
 
     @staticmethod
     def _jsonable(row: dict[str, Any]) -> dict[str, Any]:

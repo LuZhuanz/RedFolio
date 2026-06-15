@@ -1,7 +1,7 @@
 {
   "name": "redfolio",
   "version": "0.1.0",
-  "description": "Desktop dividend portfolio tracker for A-share stocks and listed dividend ETFs.",
+  "description": "Desktop dividend portfolio tracker for A-share stocks, listed dividend ETFs, and ETF feeder funds.",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
