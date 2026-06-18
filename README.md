@@ -55,7 +55,7 @@ npm run lint
 ## 运行配置
 
 - `REDFOLIO_DISABLE_ELECTRON_SANDBOX=1`：仅用于在 Linux 上显式关闭 Electron 沙箱。
-- `REDFOLIO_AKSHARE_TIMEOUT_SECONDS`：AKShare 单次调用超时，默认 15 秒。
+- `REDFOLIO_AKSHARE_TIMEOUT_SECONDS`：AKShare 单次调用超时，默认 45 秒。
 - `REDFOLIO_AKSHARE_REQUEST_INTERVAL_SECONDS`：AKShare 调用间隔，默认 0.5 秒。
 
 ## 当前口径

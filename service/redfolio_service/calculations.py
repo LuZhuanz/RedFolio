@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -69,20 +70,105 @@ def shares_on_date(transactions: Iterable[Transaction], target_date: date) -> fl
 
 
 def ttm_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
-    start = as_of - timedelta(days=365)
+    events = dedupe_dividend_events(events)
+    # Wide window (~400d) tolerates annual ex_date drift so a once-a-year payer
+    # does not drop to zero just before its next ex_date.
+    start = as_of - timedelta(days=400)
     total = sum(event.cash_per_share for event in events if start < event.ex_date <= as_of and event.cash_per_share > 0)
     return round(total, 6)
 
 
-def reference_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
-    eligible_events = [event for event in events if event.ex_date <= as_of and event.cash_per_share > 0]
-    report_years = [event.report_year for event in eligible_events if event.report_year is not None]
-    if report_years:
-        latest_report_year = max(report_years)
-        total = sum(event.cash_per_share for event in eligible_events if event.report_year == latest_report_year)
-        return round(total, 6)
+def dedupe_dividend_events(events: Iterable[DividendEvent]) -> list[DividendEvent]:
+    """Collapse duplicate rows returned by multiple upstream dividend sources."""
+    by_event: dict[tuple[date, float], DividendEvent] = {}
 
-    return ttm_cash_per_share(eligible_events, as_of)
+    def score(event: DividendEvent) -> tuple[bool, bool, bool, int]:
+        return (
+            event.report_year is not None,
+            event.pay_date is not None,
+            event.status == "announced",
+            event.id,
+        )
+
+    for event in events:
+        key = (event.ex_date, round(event.cash_per_share, 6))
+        existing = by_event.get(key)
+        if existing is None or score(event) > score(existing):
+            by_event[key] = event
+
+    return sorted(by_event.values(), key=lambda item: (item.ex_date, item.id))
+
+
+def estimate_frequency(events: Iterable[DividendEvent], as_of: date) -> int | None:
+    """Infer dividends-per-year from history by counting payments per calendar year.
+
+    Returns the most common yearly count (mode). Requires at least two distinct
+    observed years before committing to a frequency — a single payment cannot
+    tell apart "annual" from "the first of four", so we return None and let the
+    caller fall back to the TTM window. On a tie in the mode, returns the larger
+    count to lean conservative (slightly higher base) rather than risk undercount.
+    """
+    eligible = [event for event in dedupe_dividend_events(events) if event.ex_date <= as_of and event.cash_per_share > 0]
+    if not eligible:
+        return None
+
+    per_year = Counter(event.ex_date.year for event in eligible)
+    if len(per_year) < 2:
+        return None
+
+    return max(per_year.values())
+
+
+def report_year_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float | None:
+    eligible = [
+        event
+        for event in dedupe_dividend_events(events)
+        if event.ex_date <= as_of and event.cash_per_share > 0 and event.report_year is not None
+    ]
+    if not eligible:
+        return None
+
+    latest_report_year = max(event.report_year for event in eligible if event.report_year is not None)
+    total = sum(event.cash_per_share for event in eligible if event.report_year == latest_report_year)
+    return round(total, 6)
+
+
+def annual_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
+    """Annualized dividend-per-share base, frequency-aware.
+
+    Counts the most recent ``freq`` payments (where ``freq`` is the inferred
+    per-year frequency) rather than summing a fixed-day window. This is immune
+    to ex_date drift: counting payments instead of days means a once-a-year
+    payer is never over/under-counted at the window edge.
+
+    Falls back to the wide TTM window when frequency cannot be inferred.
+    """
+    report_year_cash = report_year_cash_per_share(events, as_of)
+    if report_year_cash is not None:
+        return report_year_cash
+
+    deduped_events = dedupe_dividend_events(events)
+    eligible = sorted(
+        (event for event in deduped_events if event.ex_date <= as_of and event.cash_per_share > 0),
+        key=lambda item: item.ex_date,
+        reverse=True,
+    )
+    if not eligible:
+        return 0.0
+
+    freq = estimate_frequency(events, as_of)
+    if freq is None:
+        return ttm_cash_per_share(events, as_of)
+
+    recent = eligible[:freq]
+    return round(sum(event.cash_per_share for event in recent), 6)
+
+
+def reference_cash_per_share(events: Iterable[DividendEvent], as_of: date) -> float:
+    eligible_events = [
+        event for event in dedupe_dividend_events(events) if event.ex_date <= as_of and event.cash_per_share > 0
+    ]
+    return annual_cash_per_share(eligible_events, as_of)
 
 
 def forecast_taxable_income(
@@ -91,7 +177,7 @@ def forecast_taxable_income(
     as_of: date,
 ) -> dict[str, object]:
     sorted_transactions = list(transactions)
-    sorted_events = sorted(events, key=lambda item: (item.ex_date, item.id))
+    sorted_events = sorted(dedupe_dividend_events(events), key=lambda item: (item.ex_date, item.id))
     year_events = [event for event in sorted_events if event.ex_date.year == as_of.year]
     lines: list[dict[str, object]] = []
     known_cash_per_share = 0.0

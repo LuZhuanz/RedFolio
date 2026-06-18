@@ -4,26 +4,30 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from datetime import date
 
 from fastapi.testclient import TestClient
 
 from redfolio_service.calculations import reference_cash_per_share
 from redfolio_service.data_sources import Dividend
-from redfolio_service.main import create_app, dividend_from_row, refresh_instrument, report_year_from_raw
+from redfolio_service.main import create_app, dividend_from_row, refresh_instrument
 
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
-        self.db_path = os.path.join(tempfile.gettempdir(), "redfolio-api-test.sqlite3")
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        self.db_path = os.path.join(tempfile.gettempdir(), f"redfolio-api-test-{uuid.uuid4().hex}.sqlite3")
         self.client = TestClient(create_app(self.db_path, "test-token"))
         self.headers = {"x-redfolio-token": "test-token"}
 
     def tearDown(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        self.client.close()
+        for path in (self.db_path, f"{self.db_path}-wal", f"{self.db_path}-shm"):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except PermissionError:
+                    pass
 
     def test_create_transaction_and_dashboard(self):
         response = self.client.post(
@@ -155,7 +159,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(dividends), 1)
         self.assertEqual(dividends[0]["cashPerShare"], 0.1)
 
-    def test_stock_report_year_inference_avoids_ttm_overcount(self):
+    def test_stock_reference_cash_uses_annual_cash(self):
         rows = [
             self.dividend_row(1, "2025-07-14", 0.1646, "2025-03-29"),
             self.dividend_row(2, "2025-12-15", 0.1414, "2025-12-09"),
@@ -164,19 +168,74 @@ class ApiTests(unittest.TestCase):
 
         events = [dividend_from_row(row) for row in rows]
 
-        self.assertEqual([event.report_year for event in events], [2024, 2025, 2025])
+        # Frequency inference: 2 payments in 2025, 1 in 2026 → mode 2.
+        # Annual base = most recent 2 payments = 0.1689 + 0.1414.
         self.assertEqual(reference_cash_per_share(events, date(2026, 6, 13)), 0.3103)
 
-    def test_etf_report_year_does_not_infer_from_calendar_dates(self):
-        raw_json = json.dumps({"公告日期": "2026-05-07", "除权除息日": "2026-05-13"}, ensure_ascii=False)
+    def test_dividend_from_row_reads_stock_report_year(self):
+        event = dividend_from_row(
+            {
+                "id": 1,
+                "instrument_id": 1,
+                "ex_date": "2026-05-13",
+                "pay_date": None,
+                "cash_per_share": 0.1689,
+                "status": "announced",
+                "security_type": "STOCK",
+                "raw_json": json.dumps({"\u62a5\u544a\u65f6\u95f4": "2025\u5e74\u62a5"}),
+            }
+        )
 
-        self.assertIsNone(report_year_from_raw(raw_json, infer_from_dates=False))
+        self.assertEqual(event.report_year, 2025)
 
-    def test_etf_link_report_year_does_not_infer_from_calendar_dates(self):
-        row = self.dividend_row(1, "2026-05-13", 0.061, "2026-05-07")
-        row["security_type"] = "ETF_LINK"
+    def test_refresh_instrument_replaces_duplicate_dividends_across_sources(self):
+        import sqlite3
 
-        self.assertIsNone(dividend_from_row(row).report_year)
+        self.client.post(
+            "/api/transactions",
+            headers=self.headers,
+            json={
+                "code": "601398",
+                "securityType": "STOCK",
+                "name": "ICBC",
+                "side": "BUY",
+                "tradeDate": "2026-01-02",
+                "quantity": 100,
+                "price": 7.26,
+                "fees": 0,
+                "note": "",
+            },
+        )
+
+        with sqlite3.connect(self.db_path) as connection:
+            instrument_id = connection.execute("SELECT id FROM instruments WHERE code = '601398'").fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO dividend_events
+                (instrument_id, ex_date, pay_date, record_date, cash_per_share, source, status, raw_json)
+                VALUES (?, '2026-05-13', NULL, NULL, 0.1689, 'old-source', 'announced', '{}')
+                """,
+                (instrument_id,),
+            )
+
+        class Source:
+            def get_quote(self, code, security_type):
+                raise RuntimeError("quote proxy failed")
+
+            def get_dividends(self, code, security_type):
+                return [Dividend(ex_date=date(2026, 5, 13), cash_per_share=0.1689, source="new-source")]
+
+        from redfolio_service.main import AppState
+
+        refresh_instrument(
+            AppState(self.db_path, "test-token"),
+            Source(),
+            {"id": instrument_id, "code": "601398", "security_type": "STOCK"},
+        )
+
+        dividends = self.client.get("/api/dividends", headers=self.headers).json()["items"]
+        self.assertEqual(len(dividends), 1)
+        self.assertEqual(dividends[0]["source"], "new-source")
 
     def test_init_db_migrates_old_instruments_check_for_etf_link(self):
         import sqlite3

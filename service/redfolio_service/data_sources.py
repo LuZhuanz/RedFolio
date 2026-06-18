@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, TypeVar
 
-DEFAULT_AKSHARE_TIMEOUT_SECONDS = 15.0
+DEFAULT_AKSHARE_TIMEOUT_SECONDS = 45.0
 DEFAULT_AKSHARE_REQUEST_INTERVAL_SECONDS = 0.5
 T = TypeVar("T")
 

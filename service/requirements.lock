@@ -1,6 +1,6 @@
 # Generated from service/requirements.txt against the current Python environment.
 # Regenerate from a clean venv before release when changing requirements.txt.
-akracer==0.0.14
+akracer==0.0.14; platform_system == "Linux"
 akshare==1.18.60
 altgraph==0.17.5
 annotated-doc==0.0.4
@@ -24,11 +24,12 @@ jsonpath==0.82.2
 lxml==6.0.2
 markdown-it-py==4.0.0
 mdurl==0.1.2
+mini-racer==0.14.1; platform_system != "Linux"
 numpy==1.26.4
 openpyxl==3.1.5
 packaging==25.0
 pandas==2.3.3
-py-mini-racer==0.6.0
+py-mini-racer==0.6.0; platform_system == "Linux"
 pycparser==2.22
 pydantic==2.12.5
 pydantic_core==2.41.5

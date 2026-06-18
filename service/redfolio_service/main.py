@@ -26,7 +26,6 @@ from .data_sources import (
     infer_exchange,
     infer_security_type,
     normalize_code,
-    parse_date_value,
 )
 from .db import connect, ensure_db_parent, init_db, rows_to_dicts
 
@@ -409,7 +408,6 @@ def transaction_from_row(row: dict[str, Any]) -> Transaction:
 
 
 def dividend_from_row(row: dict[str, Any]) -> DividendEvent:
-    security_type = str(row.get("security_type") or row.get("securityType") or "").upper()
     return DividendEvent(
         id=int(row["id"]),
         instrument_id=int(row["instrument_id"]),
@@ -417,47 +415,47 @@ def dividend_from_row(row: dict[str, Any]) -> DividendEvent:
         pay_date=date.fromisoformat(row["pay_date"]) if row.get("pay_date") else None,
         cash_per_share=float(row["cash_per_share"]),
         status=row.get("status") or "announced",
-        report_year=report_year_from_raw(row.get("raw_json") or "{}", infer_from_dates=security_type == "STOCK"),
+        report_year=report_year_from_row(row),
     )
 
 
-def report_year_from_raw(raw_json: str, infer_from_dates: bool = True) -> int | None:
+def report_year_from_row(row: dict[str, Any]) -> int | None:
+    existing = row.get("report_year")
+    if existing:
+        try:
+            return int(existing)
+        except (TypeError, ValueError):
+            pass
+
+    if (row.get("security_type") or row.get("securityType") or "").upper() != "STOCK":
+        return None
+
+    raw_json = row.get("raw_json")
+    if not raw_json:
+        return None
+
     try:
-        raw = json.loads(raw_json)
-    except json.JSONDecodeError:
+        payload = json.loads(raw_json)
+    except (TypeError, ValueError):
         return None
-    report_text = str(raw.get("报告时间") or raw.get("报告期") or raw.get("分红年度") or raw.get("年度") or "")
-    match = re.search(r"(\d{4})", report_text)
-    if match:
-        return int(match.group(1))
-
-    if not infer_from_dates:
+    if not isinstance(payload, dict):
         return None
 
-    announcement_date = first_raw_date(raw, ("公告日期", "预案公告日", "董事会日期"))
-    ex_date = first_raw_date(raw, ("除权除息日", "除息日", "除权日", "权益除息日", "日期"))
-
-    if ex_date and ex_date.month >= 9:
-        return ex_date.year
-    if announcement_date:
-        if ex_date and ex_date.month <= 2 and announcement_date.year < ex_date.year:
-            return announcement_date.year
-        if announcement_date.month <= 8:
-            return announcement_date.year - 1
-        return announcement_date.year
-    if ex_date:
-        return ex_date.year - 1 if ex_date.month <= 8 else ex_date.year
+    for key in ("报告时间", "报告期", "报告年度"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        parsed = parse_report_year(value)
+        if parsed is not None:
+            return parsed
     return None
 
 
-def first_raw_date(raw: dict[str, Any], candidates: tuple[str, ...]) -> date | None:
-    for wanted in candidates:
-        for key, value in raw.items():
-            if wanted in str(key):
-                parsed = parse_date_value(value)
-                if parsed:
-                    return parsed
-    return None
+def parse_report_year(value: Any) -> int | None:
+    match = None
+    if value is not None:
+        match = re.search(r"(?:19|20)\d{2}", str(value))
+    return int(match.group(0)) if match else None
 
 
 def build_positions(state: AppState, as_of: date) -> list[dict[str, Any]]:
@@ -609,9 +607,16 @@ def refresh_instrument(state: AppState, source: AkshareDataSource, instrument: d
                     connection.execute(
                         """
                         DELETE FROM dividend_events
-                        WHERE instrument_id = ? AND ex_date = ? AND source = ?
+                        WHERE instrument_id = ?
+                          AND ex_date = ?
+                          AND (source = ? OR ABS(cash_per_share - ?) < 0.000001)
                         """,
-                        (instrument["id"], dividend.ex_date.isoformat(), dividend.source),
+                        (
+                            instrument["id"],
+                            dividend.ex_date.isoformat(),
+                            dividend.source,
+                            dividend.cash_per_share,
+                        ),
                     )
                     connection.execute(
                         """

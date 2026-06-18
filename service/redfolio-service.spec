@@ -1,6 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import importlib.util
+import platform
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -23,13 +26,52 @@ datas = []
 for package in ("akshare",):
     datas += collect_data_files(package)
 
+binaries = []
+
+
+def package_dir(package):
+    spec = importlib.util.find_spec(package)
+    if spec is None or not spec.submodule_search_locations:
+        raise RuntimeError(f"Package not found: {package}")
+    return Path(next(iter(spec.submodule_search_locations)))
+
+
+def mini_racer_library_name():
+    machine = platform.machine()
+    if sys.platform == "win32":
+        return "mini_racer.dll"
+    if sys.platform == "darwin" and machine == "arm64":
+        return "armlibmini_racer.dylib"
+    if sys.platform == "darwin":
+        return "libmini_racer.dylib"
+    if machine == "aarch64":
+        return "armlibmini_racer.glibc.so"
+    return "libmini_racer.glibc.so"
+
+
+py_mini_racer_dir = package_dir("py_mini_racer")
+mini_racer_library = py_mini_racer_dir / mini_racer_library_name()
+uses_modern_mini_racer_loader = (py_mini_racer_dir / "_dll.py").exists()
+uses_legacy_mini_racer_loader = (py_mini_racer_dir / "py_mini_racer.py").exists()
+if uses_modern_mini_racer_loader and uses_legacy_mini_racer_loader:
+    raise RuntimeError("Conflicting py_mini_racer package files; reinstall mini-racer in the build environment.")
+
+mini_racer_destination = "py_mini_racer" if uses_modern_mini_racer_loader else "."
+
+if mini_racer_library.exists():
+    binaries.append((str(mini_racer_library), mini_racer_destination))
+
+mini_racer_icu_data = py_mini_racer_dir / "icudtl.dat"
+if mini_racer_icu_data.exists():
+    datas.append((str(mini_racer_icu_data), mini_racer_destination))
+
 block_cipher = None
 
 
 a = Analysis(
     [str(service_dir / "packaged_entry.py")],
     pathex=[str(service_dir)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
